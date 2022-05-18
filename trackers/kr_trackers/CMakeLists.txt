@@ -20,6 +20,7 @@ find_package(
              tf
              kr_mav_msgs
              kr_tracker_msgs
+             kr_planning_msgs
              kr_trackers_manager)
 find_package(Eigen3 REQUIRED)
 
@@ -36,6 +37,7 @@ catkin_package(
   tf
   kr_mav_msgs
   kr_tracker_msgs
+  kr_planning_msgs
   kr_trackers_manager
   DEPENDS
   EIGEN3)
@@ -56,7 +58,8 @@ add_library(
   src/smooth_vel_tracker_server.cpp
   src/trajectory_tracker.cpp
   src/traj_gen.cpp
-  src/velocity_tracker.cpp)
+  src/velocity_tracker.cpp
+  src/spline_trajectory_tracker.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC include ${catkin_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${catkin_LIBRARIES} Eigen3::Eigen)
 
