@@ -22,6 +22,7 @@
   <depend>kr_tracker_msgs</depend>
   <depend>kr_planning_msgs</depend>
   <depend>kr_trackers_manager</depend>
+  <depend>traj_opt_ros</depend>
 
   <export>
     <kr_trackers_manager plugin="${prefix}/nodelet_plugin.xml"/>

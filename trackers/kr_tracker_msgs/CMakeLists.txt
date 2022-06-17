@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-find_package(catkin REQUIRED COMPONENTS message_generation nav_msgs geometry_msgs actionlib_msgs)
+find_package(catkin REQUIRED COMPONENTS message_generation nav_msgs geometry_msgs actionlib_msgs kr_planning_msgs)
 
 add_service_files(DIRECTORY srv FILES Transition.srv)
 
@@ -19,7 +19,8 @@ add_action_files(
   CircleTracker.action
   TrajectoryTracker.action
   LissajousTracker.action
-  LissajousAdder.action)
+  LissajousAdder.action
+  SplineTrajectoryTracker.action)
 
 add_message_files(
   DIRECTORY
@@ -28,11 +29,12 @@ add_message_files(
   TrackerStatus.msg
   VelocityGoal.msg)
 
-generate_messages(DEPENDENCIES geometry_msgs actionlib_msgs)
+generate_messages(DEPENDENCIES geometry_msgs actionlib_msgs kr_planning_msgs)
 
 catkin_package(
   CATKIN_DEPENDS
   nav_msgs
   geometry_msgs
   actionlib_msgs
+  kr_planning_msgs
   message_runtime)

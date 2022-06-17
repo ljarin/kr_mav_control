@@ -52,3 +52,5 @@ qtcreator-*
 CATKIN_IGNORE
 
 *.bag
+
+.vscode/

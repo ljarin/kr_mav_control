@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall)
@@ -21,7 +21,8 @@ find_package(
              kr_mav_msgs
              kr_tracker_msgs
              kr_planning_msgs
-             kr_trackers_manager)
+             kr_trackers_manager
+             traj_opt_ros)
 find_package(Eigen3 REQUIRED)
 
 catkin_package(
@@ -39,6 +40,7 @@ catkin_package(
   kr_tracker_msgs
   kr_planning_msgs
   kr_trackers_manager
+  traj_opt_ros
   DEPENDS
   EIGEN3)
 
@@ -59,7 +61,8 @@ add_library(
   src/trajectory_tracker.cpp
   src/traj_gen.cpp
   src/velocity_tracker.cpp
-  src/spline_trajectory_tracker.cpp)
+  src/spline_trajectory_tracker.cpp
+  src/traj_to_quad_cmd.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC include ${catkin_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${catkin_LIBRARIES} Eigen3::Eigen)
 

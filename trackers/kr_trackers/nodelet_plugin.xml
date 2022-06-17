@@ -54,6 +54,12 @@
     </description>
   </class>
 
+
+  <class name="kr_trackers/SplineTrajectoryTracker" type="SplineTrajectoryTracker" base_class_type="kr_trackers_manager::Tracker">
+    <description>
+      Follows a kr_planning_msgs/SplineTrajectory
+    </description>
+  </class>
 <!--
   <class name="kr_trackers/LineTrackerTrapezoid" type="LineTrackerTrapezoid" base_class_type="kr_trackers_manager::Tracker">
     <description>

@@ -13,38 +13,39 @@
 #include <kr_planning_msgs/SplineTrajectory.h>
 
 // traj_opt stuff
-#include <action_trackers/traj_to_quad_cmd.h>
+#include <kr_trackers/traj_to_quad_cmd.h>
 #include <std_msgs/Empty.h>
 #include <traj_opt_ros/msg_traj.h>
 #include <traj_opt_ros/ros_bridge.h>
 
 // action stuff
-#include <action_trackers/RunTrajectoryAction.h>
 #include <actionlib/server/simple_action_server.h>
+#include <kr_tracker_msgs/SplineTrajectoryTrackerAction.h>
 // boost
 #include <boost/shared_ptr.hpp>
 // angles
 #include <angles/angles.h>
 #include <geometry_msgs/Vector3.h>
 
+#include <algorithm>
 #include <memory>
 
-class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
+class ActionTrajectoryTracker : public kr_trackers_manager::Tracker
+{
  public:
   // Initialize, Activate, Deactivate, update functions are all called by
-  // trackers_manager.cpp Goal will have information about trajectory
-  // (goal->traj), epoch (goal->epoch), replan_rate (goal->replan_rate) and
-  // bloack (goal->block)
+  // trackers_manager.cpp Goal will have information about trajectory, epoch,
+  // local and global replan rate, etc.
 
   /**
    * @brief initialize tracker
    */
-  void Initialize(const ros::NodeHandle& nh) override;
+  void Initialize(const ros::NodeHandle &nh) override;
 
   /**
    * @brief activate tracker
    */
-  bool Activate(const kr_mav_msgs::PositionCommand::ConstPtr& cmd) override;
+  bool Activate(const kr_mav_msgs::PositionCommand::ConstPtr &cmd) override;
 
   /**
    * @brief deactivate tracker
@@ -63,8 +64,7 @@ class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
    * @param use_yaw_ if true and if trajectory dimension is not 9, will check
    * yaw. If both use_lambda_ and use_yaw_ set as false, will check nothing
    */
-  kr_mav_msgs::PositionCommand::ConstPtr update(
-      const nav_msgs::Odometry::ConstPtr& msg) override;
+  kr_mav_msgs::PositionCommand::ConstPtr update(const nav_msgs::Odometry::ConstPtr &msg) override;
 
   /**
    * @brief Goal callback function.
@@ -74,7 +74,7 @@ class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
   /**
    * @brief Yaw alignment function.
    */
-  void AlignYaw(const nav_msgs::Odometry::ConstPtr& odom_msg);
+  void AlignYaw(const nav_msgs::Odometry::ConstPtr &odom_msg);
 
   void preemptCB();
   uint8_t status() const override;
@@ -103,9 +103,7 @@ class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
   kr_mav_msgs::PositionCommand::Ptr init_cmd_;
 
   // action lib
-  std::unique_ptr<
-      actionlib::SimpleActionServer<action_trackers::RunTrajectoryAction>>
-      as_;
+  std::unique_ptr<actionlib::SimpleActionServer<kr_tracker_msgs::SplineTrajectoryTrackerAction>> as_;
   bool prempted{false};
   double prempted_time;
   double yaw_thr_;
@@ -121,20 +119,20 @@ class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
   ros::Time last_yaw_align_time_;
   bool yaw_alignment_initialized_ = false;
   bool alignment_ongoing_ = false;
-  double yaw_align_dt_ =
-      1.5;  // derive yaw alignment direction every yaw_align_dt_ seconds
+  // calculated desired yaw direction every yaw_align_dt_ seconds
+  double yaw_align_dt_ = 1.5;
   double last_yaw_align_x_ = 0.0;
   double last_yaw_align_y_ = 0.0;
   double yaw_des_ = 0.0;
   double ultimate_yaw_des_ = 0.0;
-  double yaw_threshold_ =
-      0.5;  // rad, if yaw error is larger than this, alignment will start
+  double yaw_threshold_ = 0.05;  // rad, if yaw error is larger than this, alignment will start
   double yaw_dot_des_ = 0.0;
   bool odom_yaw_recorded_ = false;
 
   ros::Publisher epoch_pub_, point_pub_, lambda_pub_;
 
-  static traj_opt::VecD make4d(const traj_opt::VecD& vec) {
+  static traj_opt::VecD make4d(const traj_opt::VecD &vec)
+  {
     traj_opt::VecD out = traj_opt::VecD::Zero(4);
     long int rows = std::min(vec.rows(), static_cast<long int>(4));
     out.block(0, 0, rows, 1) = vec.block(0, 0, rows, 1);
@@ -142,7 +140,8 @@ class ActionTrajectoryTracker : public kr_trackers_manager::Tracker {
   }
 };
 
-void ActionTrajectoryTracker::Initialize(const ros::NodeHandle& nh) {
+void ActionTrajectoryTracker::Initialize(const ros::NodeHandle &nh)
+{
   nh_ = boost::make_shared<ros::NodeHandle>(nh);
   nh_->param("gains/pos/x", kx_[0], 2.5);
   nh_->param("gains/pos/y", kx_[1], 2.5);
@@ -156,7 +155,7 @@ void ActionTrajectoryTracker::Initialize(const ros::NodeHandle& nh) {
   priv_nh.param("yaw_thr", yaw_thr_, 3.14159);
   priv_nh.param("use_lambda", use_lambda_, true);  // pose error checking
   priv_nh.param("align_yaw", align_yaw_, true);
-  priv_nh.param("yaw_speed_magnitude", yaw_dot_magnitude_, 0.3);
+  priv_nh.param("yaw_speed_magnitude", yaw_dot_magnitude_, 0.5);
 
   epoch_pub_ = nh_->advertise<std_msgs::Int64>("epoch", 10);
   point_pub_ = nh_->advertise<geometry_msgs::PointStamped>("roi", 10);
@@ -164,43 +163,46 @@ void ActionTrajectoryTracker::Initialize(const ros::NodeHandle& nh) {
 
   active_ = false;
 
-  as_.reset(
-      new actionlib::SimpleActionServer<action_trackers::RunTrajectoryAction>(
-          nh, "execute_trajectory", false));
+  as_.reset(new actionlib::SimpleActionServer<kr_tracker_msgs::SplineTrajectoryTrackerAction>(nh, "execute_trajectory",
+                                                                                              false));
 
   // Register goal and preempt callbacks
-  as_->registerGoalCallback(
-      boost::bind(&ActionTrajectoryTracker::trajCB, this));
-  as_->registerPreemptCallback(
-      boost::bind(&ActionTrajectoryTracker::preemptCB, this));
+  as_->registerGoalCallback(boost::bind(&ActionTrajectoryTracker::trajCB, this));
+  as_->registerPreemptCallback(boost::bind(&ActionTrajectoryTracker::preemptCB, this));
 
   as_->start();
 }
 
-bool ActionTrajectoryTracker::Activate(
-    const kr_mav_msgs::PositionCommand::ConstPtr& msg) {
+bool ActionTrajectoryTracker::Activate(const kr_mav_msgs::PositionCommand::ConstPtr &msg)
+{
   // initialization
   started_ = ros::Time(0);
   odom_yaw_recorded_ = false;
   yaw_alignment_initialized_ = false;
   alignment_ongoing_ = false;
 
-  if (next_trajectory_.size() == 0) {
-    if (msg == NULL)
+  if(next_trajectory_.size() == 0)
+  {
+    if(msg == NULL)
       return false;
-    else {
+    else
+    {
       init_cmd_.reset(new kr_mav_msgs::PositionCommand(*(msg)));
       active_ = true;
       return true;
     }
-  } else {
+  }
+  else
+  {
     active_ = true;
-    if (msg != NULL) init_cmd_.reset(new kr_mav_msgs::PositionCommand(*(msg)));
+    if(msg != NULL)
+      init_cmd_.reset(new kr_mav_msgs::PositionCommand(*(msg)));
     return true;
   }
 }
 
-void ActionTrajectoryTracker::Deactivate(void) {
+void ActionTrajectoryTracker::Deactivate(void)
+{
   active_ = false;
   init_cmd_ = kr_mav_msgs::PositionCommand::Ptr();
   current_trajectory_ = boost::shared_ptr<traj_opt::Trajectory>();
@@ -214,14 +216,16 @@ void ActionTrajectoryTracker::Deactivate(void) {
   alignment_ongoing_ = false;
 }
 
-kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
-    const nav_msgs::Odometry::ConstPtr& msg) {
-  if (!active_) {
+kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(const nav_msgs::Odometry::ConstPtr &msg)
+{
+  if(!active_)
+  {
     return kr_mav_msgs::PositionCommand::ConstPtr();
   }
 
   // no current traj and next traj, return init_cmd_
-  if (current_trajectory_ == NULL && next_trajectory_.size() == 0) {
+  if(current_trajectory_ == NULL && next_trajectory_.size() == 0)
+  {
     init_cmd_->header.stamp = ros::Time::now();
     return init_cmd_;
   }
@@ -235,45 +239,53 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
   lambda_pub_.publish(lambda_v);
 
   // no current traj but have next traj, check continuity first
-  if (current_trajectory_ == NULL && next_trajectory_.size() > 0) {
+  if(current_trajectory_ == NULL && next_trajectory_.size() > 0)
+  {
     started_ = ros::Time::now();
     current_epoch_ = traj_epoch.front();
     duration = 0.0;
     // check for initial continuity
     traj_opt::VecD pos_old(4, 1), pos_new;
-    pos_old << init_cmd_->position.x, init_cmd_->position.y,
-        init_cmd_->position.z, init_cmd_->yaw;
+    pos_old << init_cmd_->position.x, init_cmd_->position.y, init_cmd_->position.z, init_cmd_->yaw;
     next_trajectory_.front()->evaluate(0.0, 0, pos_new);
 
-    if (pos_new.rows() < 4) {
+    if(pos_new.rows() < 4)
+    {
       pos_old.conservativeResize(pos_new.rows(), 1);
-    } else if (pos_new.rows() == 9) {  // special sphere traj thing
+    }
+    else if(pos_new.rows() == 9)
+    {  // special sphere traj thing
       pos_old = pos_old.block(0, 0, 3, 1);
       pos_new = pos_new.block(0, 0, 3, 1);
     }
 
-    if (pos_new.rows() >= 4) {
+    if(pos_new.rows() >= 4)
+    {
       // robust to wrapping by pi
       pos_old(3) = std::cos(pos_old(3));
       pos_new(3) = std::cos(pos_new(3));
     }
 
     // check continuity in position
-    if ((pos_old - pos_new).norm() > 3.0) {
+    if((pos_old - pos_new).norm() > 3.0)
+    {
       // discontinuity is too large, abort
-      ROS_ERROR_STREAM("Trajectories not continuous, aborting transition from "
-                       << pos_old.transpose() << " to " << pos_new.transpose());
+      ROS_ERROR_STREAM("Trajectories not continuous, aborting transition from " << pos_old.transpose() << " to "
+                                                                                << pos_new.transpose());
       next_trajectory_.erase(next_trajectory_.begin());
       traj_epoch.erase(traj_epoch.begin());
       init_cmd_->header.stamp = ros::Time::now();
-      if (next_trajectory_.size() == 0) done_ = true;
+      if(next_trajectory_.size() == 0)
+        done_ = true;
 
       // abort by publishing negative epoch so that replanner is aware
       std_msgs::Int64 epoch_msg;
       epoch_msg.data = -1;
       epoch_pub_.publish(epoch_msg);
       return init_cmd_;
-    } else {
+    }
+    else
+    {
       // discontinuity is within threshold, accept next_trajectory_ as new
       // trajectory
       current_trajectory_ = next_trajectory_.front();
@@ -281,18 +293,19 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
       current_epoch_ = traj_epoch.front();
       traj_epoch.erase(traj_epoch.begin());
       state_lambda(0) = 0;
-      ROS_INFO_STREAM("Accepted new trajectory. Queue sizes: "
-                      << next_trajectory_.size() << " and "
-                      << traj_epoch.size());
+      ROS_INFO_STREAM("Accepted new trajectory. Queue sizes: " << next_trajectory_.size() << " and "
+                                                               << traj_epoch.size());
     }
   }
   // both current traj and next traj exist
-  else if (next_trajectory_.size() > 0) {
+  else if(next_trajectory_.size() > 0)
+  {
     int epoch_diff = traj_epoch.front() - current_epoch_;
 
     // check_time is the timestamp to stitch old traj and new traj together
     double check_time = execution_time * double(epoch_diff);
-    if (duration >= check_time) {
+    if(duration >= check_time)
+    {
       // only do something if trajectory is old
       traj_opt::VecD pos_old, pos_new;
       traj_opt::VecD vel_old, vel_new;
@@ -305,54 +318,53 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
       next_trajectory_.front()->evaluate(0.0, 0, pos_new);
       next_trajectory_.front()->evaluate(0.0, 1, vel_new);
 
-      if (pos_new.rows() < 4) {
+      if(pos_new.rows() < 4)
+      {
         pos_old.conservativeResize(pos_new.rows(), 1);
         vel_old.conservativeResize(vel_new.rows(), 1);
-      } else if (pos_new.rows() == 9) {  // special sphere traj thing
+      }
+      else if(pos_new.rows() == 9)
+      {  // special sphere traj thing
         pos_old = pos_old.block(0, 0, 3, 1);
         pos_new = pos_new.block(0, 0, 3, 1);
       }
 
-      if (pos_new.rows() >= 4) {
+      if(pos_new.rows() >= 4)
+      {
         pos_old(3) = std::cos(pos_old(3));
         pos_new(3) = std::cos(pos_new(3));
       }
 
       // check for continuity
-      if ((pos_old - pos_new).norm() > 1.0) {
+      if((pos_old - pos_new).norm() > 1.0)
+      {
         // discontinuity in position is too large, abort
-        ROS_ERROR_STREAM("Replan not continuous from " << pos_old.transpose()
-                                                       << " to "
-                                                       << pos_new.transpose());
-        ROS_ERROR_STREAM("current epoch: "
-                         << current_epoch_
-                         << " traj epoch: " << traj_epoch.front()
-                         << " execution time: " << execution_time
-                         << " check time " << check_time);
+        ROS_ERROR_STREAM("Replan not continuous from " << pos_old.transpose() << " to " << pos_new.transpose());
+        ROS_ERROR_STREAM("current epoch: " << current_epoch_ << " traj epoch: " << traj_epoch.front()
+                                           << " execution time: " << execution_time << " check time " << check_time);
         next_trajectory_.erase(next_trajectory_.begin());
         traj_epoch.erase(traj_epoch.begin());
         // abort by publishing negative epoch so that replanner is aware
         std_msgs::Int64 epoch_msg;
         epoch_msg.data = -1;
         epoch_pub_.publish(epoch_msg);
-
-      } else if ((vel_old - vel_new).norm() > 1.0) {
+      }
+      else if((vel_old - vel_new).norm() > 1.0)
+      {
         // discontinuity in velocity is too large, abort
-        ROS_ERROR_STREAM("Replan velocity not continuous from "
-                         << vel_old.transpose() << " to "
-                         << vel_new.transpose());
-        ROS_ERROR_STREAM("current epoch: "
-                         << current_epoch_
-                         << " traj epoch: " << traj_epoch.front()
-                         << " execution time: " << execution_time);
+        ROS_ERROR_STREAM("Replan velocity not continuous from " << vel_old.transpose() << " to "
+                                                                << vel_new.transpose());
+        ROS_ERROR_STREAM("current epoch: " << current_epoch_ << " traj epoch: " << traj_epoch.front()
+                                           << " execution time: " << execution_time);
         next_trajectory_.erase(next_trajectory_.begin());
         traj_epoch.erase(traj_epoch.begin());
         // abort by publishing negative epoch so that replanner is aware
         std_msgs::Int64 epoch_msg;
         epoch_msg.data = -1;
         epoch_pub_.publish(epoch_msg);
-
-      } else {
+      }
+      else
+      {
         // discontinuity in vel and position are both within threshold, accept
         // next_trajectory_ as new trajectory
         current_trajectory_ = next_trajectory_.front();
@@ -375,37 +387,37 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
 
   // evaluate trajectory and get the cmd,  see traj_to_quad_cmd.h
   bool error_check_success = true;
-  if (use_lambda_) {
+  if(use_lambda_)
+  {
     // evaluatePos will return false if difference in position between odometry
     // and trajectory is larger than pos_err_max_
-    if (!traj_opt::EvaluateTrajectoryPos(current_trajectory_,
-                                         msg,
-                                         pos_err_max_,
-                                         duration,
-                                         0.01,
-                                         cmd.get())) {
-      ROS_ERROR(
-          "[Traj Tracker:] Max position error (between odom and trajectory) "
-          "threshold violated (you need to slow down your execution or tune "
-          "gains!)! Now aborting the mission!!!");
+    if(!traj_opt::EvaluateTrajectoryPos(current_trajectory_, msg, pos_err_max_, duration, 0.01, cmd.get()))
+    {
+      ROS_ERROR("[Traj Tracker:] Max position error (between odom and trajectory) "
+                "threshold violated (you need to slow down your execution or tune "
+                "gains!)! Now aborting the mission!!!");
       ROS_ERROR_STREAM("Max  error threshold is:" << pos_err_max_);
       error_check_success = false;
     }
-  } else {
+  }
+  else
+  {
     // no pos or yaw check
     traj_opt::EvaluateTrajectory(current_trajectory_, duration, cmd.get(), 2);
   }
 
-  if (align_yaw_) {
+  if(align_yaw_)
+  {
     AlignYaw(msg);
     cmd->yaw = yaw_des_, cmd->yaw_dot = yaw_dot_des_;
-  } else {
-    if (!odom_yaw_recorded_) {
+  }
+  else
+  {
+    if(!odom_yaw_recorded_)
+    {
       // get yaw from odom's quaternion
       double roll, pitch;
-      tf::Quaternion q(msg->pose.pose.orientation.x,
-                       msg->pose.pose.orientation.y,
-                       msg->pose.pose.orientation.z,
+      tf::Quaternion q(msg->pose.pose.orientation.x, msg->pose.pose.orientation.y, msg->pose.pose.orientation.z,
                        msg->pose.pose.orientation.w);
       tf::Matrix3x3 m(q);
       m.getRPY(roll, pitch, yaw_des_);
@@ -417,30 +429,31 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
   init_cmd_ = cmd;
 
   // check if current trajectory is finished
-  if (duration > current_trajectory_->getTotalTime()) {
-    ROS_INFO_STREAM("Finished trajectories at time "
-                    << duration << " out of "
-                    << current_trajectory_->getTotalTime());
-    ROS_INFO_STREAM("Null " << (next_trajectory_.size() == 0)
-                            << " current epoch " << current_epoch_
-                            << " traj epoch " << traj_epoch.front());
+  if(duration > current_trajectory_->getTotalTime())
+  {
+    ROS_INFO_STREAM("Finished trajectories at time " << duration << " out of " << current_trajectory_->getTotalTime());
+    ROS_INFO_STREAM("Null " << (next_trajectory_.size() == 0) << " current epoch " << current_epoch_ << " traj epoch "
+                            << traj_epoch.front());
     init_cmd_->header.stamp = ros::Time::now();
     done_ = true;
     current_trajectory_ = boost::shared_ptr<traj_opt::Trajectory>();
 
-    if (as_->isActive()) {
-      action_trackers::RunTrajectoryResult result;
+    if(as_->isActive())
+    {
+      kr_tracker_msgs::SplineTrajectoryTrackerResult result;
       as_->setSucceeded(result);
     }
   }
 
   // publish current epoch
-  if (error_check_success) {
+  if(error_check_success)
+  {
     std_msgs::Int64 epoch_msg;
-    epoch_msg.data = current_epoch_ +
-                     static_cast<int>(std::floor(duration / execution_time));
+    epoch_msg.data = current_epoch_ + static_cast<int>(std::floor(duration / execution_time));
     epoch_pub_.publish(epoch_msg);
-  } else {
+  }
+  else
+  {
     // abort by publishing negative epoch so that replanner is aware
     std_msgs::Int64 epoch_msg;
     epoch_msg.data = -1;
@@ -449,73 +462,113 @@ kr_mav_msgs::PositionCommand::ConstPtr ActionTrajectoryTracker::update(
   return cmd;
 }
 
-void ActionTrajectoryTracker::AlignYaw(
-    const nav_msgs::Odometry::ConstPtr& msg) {
+void ActionTrajectoryTracker::AlignYaw(const nav_msgs::Odometry::ConstPtr &msg)
+{
   // this part is for yaw_alignment
   double time_since_last_alignment;
-  if (!yaw_alignment_initialized_) {
+  if(!yaw_alignment_initialized_)
+  {
     yaw_alignment_initialized_ = true;
     // this means not initialized, initializing everything
-    ROS_INFO(
-        "This is the very beginning of trajectory tracker, start yaw "
-        "aligning!");
+    ROS_INFO("This is the very beginning of trajectory tracker, start yaw "
+             "aligning!");
     last_yaw_align_time_ = ros::Time::now();
     time_since_last_alignment = 0.0;
     last_yaw_align_x_ = msg->pose.pose.position.x;
     last_yaw_align_y_ = msg->pose.pose.position.y;
     // get yaw from odom's quaternion
-    tf::Quaternion q(msg->pose.pose.orientation.x,
-                     msg->pose.pose.orientation.y,
-                     msg->pose.pose.orientation.z,
+    tf::Quaternion q(msg->pose.pose.orientation.x, msg->pose.pose.orientation.y, msg->pose.pose.orientation.z,
                      msg->pose.pose.orientation.w);
     tf::Matrix3x3 m(q);
     double roll, pitch;
     m.getRPY(roll, pitch, last_yaw_);
-  } else {
-    time_since_last_alignment =
-        (ros::Time::now() - last_yaw_align_time_).toSec();
+  }
+  else
+  {
+    time_since_last_alignment = (ros::Time::now() - last_yaw_align_time_).toSec();
   }
 
-  if (time_since_last_alignment > yaw_align_dt_) {
+  if(time_since_last_alignment > yaw_align_dt_)
+  {
     // derive yaw alignment direction again
     last_yaw_align_time_ = ros::Time::now();
+    double y_diff = msg->pose.pose.position.y - last_yaw_align_y_;
+    double x_diff = msg->pose.pose.position.x - last_yaw_align_x_;
+    // estimated velocity of the robot
+    double est_velocity = std::sqrt(y_diff * y_diff + x_diff * x_diff) / yaw_align_dt_;
     // desired yaw direction should be arctan(dy, dx)
-    ultimate_yaw_des_ = atan2((msg->pose.pose.position.y - last_yaw_align_y_),
-                              (msg->pose.pose.position.x - last_yaw_align_x_));
+    double est_yaw_des = std::atan2(y_diff, x_diff);
+
+    // if the robot is hovering (i.e. velocity is very small), skip alignment
+    // (by not changing the value of ultimate_yaw_des_)
+    if((est_velocity) < 0.3)
+    {
+      ROS_INFO_STREAM("[Yaw alignment:] Robot velocity is small, which is " << est_velocity
+                                                                            << " m/s, skipping yaw alignment..");
+    }
+    else
+    {
+      // avoid oscillation when the robot moves backwards
+      if(std::abs(est_yaw_des) > (3.14 * 0.9))
+      {
+        // force the ultimate_yaw_des_ to be a positive number to avoid
+        // oscillating between +pi and -pi
+        ultimate_yaw_des_ = 3.14;
+        ROS_INFO_STREAM("[Yaw alignment:] Robot is moving backwards, and yaw alignment is "
+                        "turned on...");
+      }
+      else
+      {
+        ultimate_yaw_des_ = est_yaw_des;
+      }
+    }
+
     // record x and y
     last_yaw_align_x_ = msg->pose.pose.position.x;
     last_yaw_align_y_ = msg->pose.pose.position.y;
   }
 
-  if (abs(ultimate_yaw_des_ - last_yaw_) > yaw_threshold_) {
+  if(std::abs(ultimate_yaw_des_ - last_yaw_) > yaw_threshold_)
+  {
     // set yaw dot to move robot to align with desired yaw
-    if (ultimate_yaw_des_ > last_yaw_) {
+    if(ultimate_yaw_des_ > last_yaw_)
+    {
       yaw_dot_des_ = yaw_dot_magnitude_ * 1.0;
-    } else {
+    }
+    else
+    {
       yaw_dot_des_ = yaw_dot_magnitude_ * -1.0;
     }
     // check if it's current alignment is already ongoing
-    if (!alignment_ongoing_) {
+    if(!alignment_ongoing_)
+    {
       // no, start current alignment
       align_time_passed_ = 0.0;
       alignment_ongoing_ = true;
-    } else {
+    }
+    else
+    {
       // yes, continue the alignment
       align_time_passed_ = (ros::Time::now() - prev_align_start_time_).toSec();
     }
-    if (align_time_passed_ > 0.2) {
-      ROS_WARN_STREAM("alignment time passed is "
-                      << align_time_passed_
-                      << " seconds, which is large, this is not right, "
-                         "setting it to 0.01! Go fix it!");
+    if(align_time_passed_ > 0.2)
+    {
+      ROS_WARN_STREAM("alignment time passed is " << align_time_passed_
+                                                  << " seconds, which is large, this is not right, "
+                                                     "setting it to 0.01! Go fix it!");
       align_time_passed_ = 0.01;  // just avoid aggressive movement
     }
     yaw_des_ = last_yaw_ + yaw_dot_des_ * align_time_passed_;
+    // clip value to lie in -pi ~ +pi
+    yaw_des_ = std::clamp(yaw_des_, -3.14, 3.14);
+
     // update the prev_align_start_time_
     prev_align_start_time_ = ros::Time::now();
     // update the prev_yaw_
     last_yaw_ = yaw_des_;
-  } else {
+  }
+  else
+  {
     // maintaining the last yaw
     yaw_des_ = last_yaw_;
     yaw_dot_des_ = 0.0;
@@ -523,39 +576,45 @@ void ActionTrajectoryTracker::AlignYaw(
   }
 }
 
-void ActionTrajectoryTracker::trajCB() {
+void ActionTrajectoryTracker::trajCB()
+{
   auto goal = as_->acceptNewGoal();
   done_ = false;
 
-  if (traj_epoch.size() > 0 && (traj_epoch.front() > goal->epoch)) {
+  if(traj_epoch.size() > 0 && (traj_epoch.front() > goal->epoch))
+  {
     ROS_ERROR_STREAM("Traj epoch > goal epoch. Reset queue!");
     next_trajectory_.clear();
     traj_epoch.clear();
   }
 
-  while (traj_epoch.size() > 0 && traj_epoch.back() >= goal->epoch) {
+  while(traj_epoch.size() > 0 && traj_epoch.back() >= goal->epoch)
+  {
     next_trajectory_.pop_back();
     traj_epoch.pop_back();
   }
   // extract trajectory msg from goal->traj
   kr_planning_msgs::SplineTrajectory msg = goal->traj;
   boost::shared_ptr<traj_opt::Trajectory> sp =
-      boost::make_shared<traj_opt::MsgTrajectory>(
-          traj_opt::TrajDataFromSplineTrajectory(msg));
+      boost::make_shared<traj_opt::MsgTrajectory>(traj_opt::TrajDataFromSplineTrajectory(msg));
   next_trajectory_.push_back(sp);
   prempted = false;
   // ROS_ERROR_STREAM("Done Callback with epoch " << goal->epoch);
-  if (goal->replan_rate > 0 && goal->epoch <= 0) {
+  if(goal->local_replan_rate > 0 && goal->epoch <= 0)
+  {
     ROS_ERROR("Replan rate and epoch must both be set! Rejecting Trajectory");
     return;
   }
 
   // change mode to either replanning or normal
-  if (goal->replan_rate > 0) {
-    execution_time = 1.0 / goal->replan_rate;
+  if(goal->local_replan_rate > 0)
+  {
+    execution_time = 1.0 / goal->local_replan_rate;
     // replanning mode will have non-zero traj_epoch (goal->epoch)
     traj_epoch.push_back(goal->epoch);
-  } else {
+  }
+  else
+  {
     execution_time = -1;
     traj_epoch.push_back(0);
     current_epoch_ = 0;
@@ -564,18 +623,24 @@ void ActionTrajectoryTracker::trajCB() {
   // check for continuity
   traj_opt::TrajRosBridge::publish_msg(msg);
 
-  action_trackers::RunTrajectoryResult result;
-  if (as_->isActive() && !goal->block) as_->setSucceeded(result);
+  kr_tracker_msgs::SplineTrajectoryTrackerResult result;
+  if(as_->isActive() && !goal->block)
+    as_->setSucceeded(result);
 
   static uint prevSize = 0;
-  if (next_trajectory_.size() > prevSize) {
+  if(next_trajectory_.size() > prevSize)
+  {
     prevSize = next_trajectory_.size();
   }
 }
-void ActionTrajectoryTracker::preemptCB() {
+void ActionTrajectoryTracker::preemptCB()
+{
   prempted_time = (ros::Time::now() - started_).toSec();
 }
-uint8_t ActionTrajectoryTracker::status() const { return done_; }
+uint8_t ActionTrajectoryTracker::status() const
+{
+  return done_;
+}
 
 #include <pluginlib/class_list_macros.h>
 PLUGINLIB_EXPORT_CLASS(ActionTrajectoryTracker, kr_trackers_manager::Tracker);
